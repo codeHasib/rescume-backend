@@ -9,7 +9,7 @@ app.use(express.json());
 // SERVER-PORT
 const SERVER_PORT = 5000;
 
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const uri = `mongodb+srv://${process.env.DB_USERNAME}:${process.env.DB_PASS}@cluster0.cmdrutm.mongodb.net/?appName=Cluster0`;
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
@@ -22,23 +22,41 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-    await client.connect();
-    await client.db("admin").command({ ping: 1 });
-    console.log(
-      "Pinged your deployment. You successfully connected to MongoDB! yey",
-    );
     const db = client.db("rescume");
     const petsCollection = db.collection("pets");
+    const adoptionList = db.collection("");
+
     app.get("/pets", async (req, res) => {
       const cursor = petsCollection.find();
       const result = await cursor.toArray();
       res.send(result);
     });
+
     app.post("/pets", async (req, res) => {
       const newPet = req.body;
       const result = await petsCollection.insertOne(newPet);
       res.send(result);
     });
+
+    app.delete("/pets/:id", async (req, res) => {
+      const query = {
+        _id: new ObjectId(req.params.id),
+      };
+      const result = await petsCollection.deleteOne(query);
+      res.send(result);
+    });
+
+    app.patch("/pets/:id", async (req, res) => {
+      const query = {
+        _id: new ObjectId(req.params.id),
+      };
+      const updatedPet = req.body;
+      const result = await petsCollection.updateOne(query, {
+        $set: updatedPet,
+      });
+      res.send(result);
+    });
+    
   } finally {
   }
 }
