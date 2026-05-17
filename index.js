@@ -20,11 +20,24 @@ const client = new MongoClient(uri, {
   },
 });
 
+const verifyToken = (req, res, next) => {
+  const authHeader = req?.headers.authorization;
+  if (!authHeader) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  const token = authHeader.split(" ")[1];
+  if (!token) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  next();
+};
+
 async function run() {
   try {
     const db = client.db("rescume");
     const petsCollection = db.collection("pets");
-    const adoptionList = db.collection("");
 
     app.get("/pets", async (req, res) => {
       const cursor = petsCollection.find();
@@ -32,7 +45,7 @@ async function run() {
       res.send(result);
     });
 
-    app.post("/pets", async (req, res) => {
+    app.post("/pets", verifyToken, async (req, res) => {
       const newPet = req.body;
       const result = await petsCollection.insertOne(newPet);
       res.send(result);
@@ -56,7 +69,6 @@ async function run() {
       });
       res.send(result);
     });
-    
   } finally {
   }
 }
