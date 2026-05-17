@@ -10,6 +10,8 @@ app.use(express.json());
 const SERVER_PORT = 5000;
 
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const { createRemoteJWKSet, jwtVerify } = require("jose-cjs");
+
 const uri = `mongodb+srv://${process.env.DB_USERNAME}:${process.env.DB_PASS}@cluster0.cmdrutm.mongodb.net/?appName=Cluster0`;
 
 const client = new MongoClient(uri, {
@@ -20,7 +22,11 @@ const client = new MongoClient(uri, {
   },
 });
 
-const verifyToken = (req, res, next) => {
+const JWKS = createRemoteJWKSet(
+  new URL(`${process.env.CLIENT_URI}/api/auth/jwks`),
+);
+
+const verifyToken = async (req, res, next) => {
   const authHeader = req?.headers.authorization;
   if (!authHeader) {
     return res.status(401).json({ message: "Unauthorized" });
@@ -32,9 +38,11 @@ const verifyToken = (req, res, next) => {
   }
 
   try {
-    req.user = { email: token };
+    const { payload } = await jwtVerify(token, JWKS);
+    req.user = { email: payload.email };
     next();
   } catch (error) {
+    console.error("JWT Verification Error:", error.message);
     return res.status(403).json({ message: "Forbidden" });
   }
 };
