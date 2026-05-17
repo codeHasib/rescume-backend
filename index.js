@@ -34,6 +34,11 @@ async function run() {
       const result = await cursor.toArray();
       res.send(result);
     });
+    app.post("/pets", async (req, res) => {
+      const newPet = req.body;
+      const result = await petsCollection.insertOne(newPet);
+      res.send(result);
+    });
   } finally {
   }
 }
