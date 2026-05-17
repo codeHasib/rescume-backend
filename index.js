@@ -53,6 +53,10 @@ async function run() {
     const petsCollection = db.collection("pets");
     const requestCollection = db.collection("requests");
 
+    app.get("/", (req, res) => {
+      res.send("Hello pet lovers");
+    });
+
     app.get("/pets", async (req, res) => {
       const cursor = petsCollection.find();
       const result = await cursor.toArray();
