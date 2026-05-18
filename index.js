@@ -1,11 +1,9 @@
 require("dotenv").config();
 
-const allowedOrigins = [process.env.CLIENT_URI, "http://localhost:3000"];
-
 const express = require("express");
 const cors = require("cors");
 const app = express();
-app.use(cors);
+app.use(cors());
 app.use(express.json());
 
 const SERVER_PORT = 5000;
@@ -22,10 +20,6 @@ const client = new MongoClient(uri, {
     deprecationErrors: true,
   },
 });
-
-const JWKS = createRemoteJWKSet(
-  new URL(`${process.env.CLIENT_URI}/api/auth/jwks`),
-);
 
 const verifyToken = async (req, res, next) => {
   const authHeader = req?.headers.authorization;
@@ -61,6 +55,7 @@ const verifyToken = async (req, res, next) => {
 
 async function run() {
   try {
+    await client.connect();
     const db = client.db("rescume");
     const petsCollection = db.collection("pets");
     const requestCollection = db.collection("requests");
@@ -231,6 +226,6 @@ async function run() {
 }
 run().catch(console.dir);
 
-app.listen(SERVER_PORT, console.log(`${SERVER_PORT} is listening on port`));
+const serverless = require("serverless-http");
 
-module.exports = app;
+module.exports = serverless(app);
