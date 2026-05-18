@@ -5,8 +5,7 @@ const allowedOrigins = [process.env.CLIENT_URI, "http://localhost:3000"];
 const express = require("express");
 const cors = require("cors");
 const app = express();
-app.use(cors());
-app.use(express.json());
+app.use(cors) / app.use(express.json());
 
 const SERVER_PORT = 5000;
 
@@ -29,21 +28,33 @@ const JWKS = createRemoteJWKSet(
 
 const verifyToken = async (req, res, next) => {
   const authHeader = req?.headers.authorization;
-  if (!authHeader) {
-    return res.status(401).json({ message: "Unauthorized" });
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res
+      .status(401)
+      .json({ message: "Unauthorized: Missing token string" });
   }
+
   const token = authHeader.split(" ")[1];
   if (!token) {
-    return res.status(401).json({ message: "Unauthorized" });
+    return res
+      .status(401)
+      .json({ message: "Unauthorized: Token extraction failed" });
   }
 
   try {
-    const { payload } = await jwtVerify(token, JWKS);
+    const jwksUrl = `${process.env.CLIENT_URI.replace(/\/$/, "")}/api/auth/jwks`;
+    const JWKS = createRemoteJWKSet(new URL(jwksUrl));
+
+    const { payload } = await jwtVerify(token, JWKS, {
+      issuer: process.env.CLIENT_URI.replace(/\/$/, ""),
+      audience: process.env.CLIENT_URI.replace(/\/$/, ""),
+    });
+
     req.user = { email: payload.email };
     next();
   } catch (error) {
-    console.error("JWT Verification Error:", error.message);
-    return res.status(403).json({ message: "Forbidden" });
+    console.error("JWT Verification Exception Context:", error.message);
+    return res.status(403).json({ message: `Forbidden: ${error.message}` });
   }
 };
 
