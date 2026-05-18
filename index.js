@@ -1,18 +1,36 @@
 require("dotenv").config();
-
 const express = require("express");
 const cors = require("cors");
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-const SERVER_PORT = 5000;
-
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const { createRemoteJWKSet, jwtVerify } = require("jose-cjs");
 
-const uri = `mongodb+srv://${process.env.DB_USERNAME}:${process.env.DB_PASS}@cluster0.cmdrutm.mongodb.net/?appName=Cluster0`;
+const app = express();
 
+// 1. Production CORS (Allows Better Auth to work across domains)
+const allowedOrigins = [
+  process.env.CLIENT_URI ? process.env.CLIENT_URI.replace(/\/$/, "") : "",
+  "http://localhost:3000",
+];
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin) return callback(null, true);
+      const sanitized = origin.replace(/\/$/, "");
+      if (allowedOrigins.includes(sanitized)) {
+        callback(null, true);
+      } else {
+        callback(new Error("CORS blocked"));
+      }
+    },
+    credentials: true,
+  }),
+);
+
+app.use(express.json());
+
+// 2. MongoDB Connection Helper (Fixed for Serverless)
+const uri = `mongodb+srv://${process.env.DB_USERNAME}:${process.env.DB_PASS}@cluster0.cmdrutm.mongodb.net/?appName=Cluster0`;
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -21,209 +39,149 @@ const client = new MongoClient(uri, {
   },
 });
 
+let db, petsCollection, requestCollection;
+
+async function getDB() {
+  if (!db) {
+    await client.connect();
+    db = client.db("rescume");
+    petsCollection = db.collection("pets");
+    requestCollection = db.collection("requests");
+  }
+  return { petsCollection, requestCollection };
+}
+
+// 3. JWT Verification Middleware
 const verifyToken = async (req, res, next) => {
   const authHeader = req?.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res
-      .status(401)
-      .json({ message: "Unauthorized: Missing token string" });
+  if (!authHeader?.startsWith("Bearer ")) {
+    return res.status(401).json({ message: "Unauthorized: Missing token" });
   }
-
   const token = authHeader.split(" ")[1];
-  if (!token) {
-    return res
-      .status(401)
-      .json({ message: "Unauthorized: Token extraction failed" });
-  }
 
   try {
     const jwksUrl = `${process.env.CLIENT_URI.replace(/\/$/, "")}/api/auth/jwks`;
     const JWKS = createRemoteJWKSet(new URL(jwksUrl));
-
-    const { payload } = await jwtVerify(token, JWKS, {
-      issuer: process.env.CLIENT_URI.replace(/\/$/, ""),
-      audience: process.env.CLIENT_URI.replace(/\/$/, ""),
-    });
-
+    const { payload } = await jwtVerify(token, JWKS);
     req.user = { email: payload.email };
     next();
   } catch (error) {
-    console.error("JWT Verification Exception Context:", error.message);
-    return res.status(403).json({ message: `Forbidden: ${error.message}` });
+    return res.status(403).json({ message: "Forbidden: Invalid token" });
   }
 };
 
-async function run() {
-  try {
-    await client.connect();
-    const db = client.db("rescume");
-    const petsCollection = db.collection("pets");
-    const requestCollection = db.collection("requests");
+// 4. Routes
+app.get("/", (req, res) => res.send("Rescume API Online"));
 
-    app.get("/", (req, res) => {
-      res.send("Hello pet lovers");
-    });
+app.get("/pets", async (req, res) => {
+  const { petsCollection } = await getDB();
+  const { name, species } = req.query;
+  let query = {};
+  if (name) query.petName = { $regex: name, $options: "i" };
+  if (species) query.species = { $in: species.split(",") };
 
-    app.get("/pets", async (req, res) => {
-      try {
-        const { name, species } = req.query;
-        let query = {};
+  const result = await petsCollection.find(query).toArray();
+  res.send(result);
+});
 
-        if (name) {
-          query.petName = { $regex: name, $options: "i" };
-        }
+app.get("/pets/:id", verifyToken, async (req, res) => {
+  const { petsCollection } = await getDB();
+  const result = await petsCollection.findOne({
+    _id: new ObjectId(req.params.id),
+  });
+  res.send(result);
+});
 
-        if (species) {
-          const speciesArray = species.split(",");
-          query.species = { $in: speciesArray };
-        }
+app.post("/pets", verifyToken, async (req, res) => {
+  const { petsCollection } = await getDB();
+  const newPet = {
+    ...req.body,
+    ownerEmail: req.user.email,
+    status: "available",
+  };
+  const result = await petsCollection.insertOne(newPet);
+  res.send(result);
+});
 
-        const cursor = petsCollection.find(query);
-        const result = await cursor.toArray();
-        res.send(result);
-      } catch (error) {
-        res
-          .status(500)
-          .send({ message: "Database query failed", error: error.message });
-      }
-    });
+app.delete("/pets/:id", verifyToken, async (req, res) => {
+  const { petsCollection } = await getDB();
+  const result = await petsCollection.deleteOne({
+    _id: new ObjectId(req.params.id),
+    ownerEmail: req.user.email,
+  });
+  res.send(result);
+});
 
-    app.get("/pets/:id", verifyToken, async (req, res) => {
-      const query = {
-        _id: new ObjectId(req.params.id),
-      };
-      const result = await petsCollection.findOne(query);
-      res.send(result);
-    });
+app.patch("/pets/:id", verifyToken, async (req, res) => {
+  const { petsCollection } = await getDB();
+  const result = await petsCollection.updateOne(
+    { _id: new ObjectId(req.params.id), ownerEmail: req.user.email },
+    { $set: req.body },
+  );
+  res.send(result);
+});
 
-    app.post("/pets", verifyToken, async (req, res) => {
-      const newPet = req.body;
-      newPet.ownerEmail = req.user.email;
-      newPet.status = "available";
-      const result = await petsCollection.insertOne(newPet);
-      res.send(result);
-    });
+app.get("/requests", verifyToken, async (req, res) => {
+  const { requestCollection } = await getDB();
+  const result = await requestCollection
+    .find({ applicantEmail: req.user.email })
+    .toArray();
+  res.send(result);
+});
 
-    app.delete("/pets/:id", verifyToken, async (req, res) => {
-      const query = {
-        _id: new ObjectId(req.params.id),
-        ownerEmail: req.user.email,
-      };
-      const result = await petsCollection.deleteOne(query);
-      res.send(result);
-    });
+app.get("/incoming-requests", verifyToken, async (req, res) => {
+  const { petsCollection, requestCollection } = await getDB();
+  const myPets = await petsCollection
+    .find({ ownerEmail: req.user.email })
+    .toArray();
+  const myPetIds = myPets.map((p) => p._id.toString());
+  const result = await requestCollection
+    .find({ petId: { $in: myPetIds } })
+    .toArray();
+  res.send(result);
+});
 
-    app.patch("/pets/:id", verifyToken, async (req, res) => {
-      const query = {
-        _id: new ObjectId(req.params.id),
-        ownerEmail: req.user.email,
-      };
-      const updatedPet = req.body;
-      const result = await petsCollection.updateOne(query, {
-        $set: updatedPet,
-      });
-      res.send(result);
-    });
+app.post("/requests", verifyToken, async (req, res) => {
+  const { petsCollection, requestCollection } = await getDB();
+  const targetPet = await petsCollection.findOne({
+    _id: new ObjectId(req.body.petId),
+  });
+  if (!targetPet) return res.status(404).json({ message: "Pet not found" });
+  if (targetPet.ownerEmail === req.user.email)
+    return res.status(403).json({ message: "Cannot adopt own pet" });
 
-    app.get("/requests", verifyToken, async (req, res) => {
-      try {
-        const userEmail = req.user.email;
-        const query = { applicantEmail: userEmail };
-        const cursor = requestCollection.find(query);
-        const result = await cursor.toArray();
-        res.send(result);
-      } catch (error) {
-        res.status(500).send({ message: "Internal server error" });
-      }
-    });
+  const result = await requestCollection.insertOne({
+    ...req.body,
+    applicantEmail: req.user.email,
+  });
+  res.send(result);
+});
 
-    app.get("/incoming-requests", verifyToken, async (req, res) => {
-      try {
-        const ownerEmail = req.user.email;
-        const myPets = await petsCollection
-          .find({ ownerEmail: ownerEmail })
-          .toArray();
-        const myPetIds = myPets.map((pet) => pet._id.toString());
-        const query = { petId: { $in: myPetIds } };
+app.patch("/requests/:id", verifyToken, async (req, res) => {
+  const { petsCollection, requestCollection } = await getDB();
+  const requestId = new ObjectId(req.params.id);
+  const updateResult = await requestCollection.updateOne(
+    { _id: requestId },
+    { $set: req.body },
+  );
 
-        const cursor = requestCollection.find(query);
-        const result = await cursor.toArray();
-        res.send(result);
-      } catch (error) {
-        res.status(500).send({ message: "Internal server error" });
-      }
-    });
-
-    app.post("/requests", verifyToken, async (req, res) => {
-      const newRequest = req.body;
-
-      const petQuery = { _id: new ObjectId(newRequest.petId) };
-      const targetPet = await petsCollection.findOne(petQuery);
-
-      if (!targetPet) {
-        return res.status(404).json({ message: "Pet not found" });
-      }
-
-      if (targetPet.ownerEmail === req.user.email) {
-        return res
-          .status(403)
-          .json({ message: "You cannot adopt your own listed pet" });
-      }
-
-      newRequest.applicantEmail = req.user.email;
-      const result = await requestCollection.insertOne(newRequest);
-      res.send(result);
-    });
-
-    app.delete("/requests/:id", verifyToken, async (req, res) => {
-      const query = {
-        _id: new ObjectId(req.params.id),
-        applicantEmail: req.user.email,
-      };
-      const result = await requestCollection.deleteOne(query);
-      res.send(result);
-    });
-
-    app.patch("/requests/:id", verifyToken, async (req, res) => {
-      try {
-        const requestId = req.params.id;
-        const updatedRequest = req.body;
-
-        const requestQuery = { _id: new ObjectId(requestId) };
-
-        const requestUpdateResult = await requestCollection.updateOne(
-          requestQuery,
-          {
-            $set: updatedRequest,
-          },
-        );
-
-        if (updatedRequest.status?.toLowerCase() === "approved") {
-          const currentRequest = await requestCollection.findOne(requestQuery);
-
-          if (currentRequest && currentRequest.petId) {
-            await petsCollection.updateOne(
-              { _id: new ObjectId(currentRequest.petId) },
-              { $set: { status: "adopted" } },
-            );
-            await requestCollection.updateMany(
-              {
-                petId: currentRequest.petId,
-                _id: { $ne: new ObjectId(requestId) },
-              },
-              { $set: { status: "Rejected" } },
-            );
-          }
-        }
-
-        res.send(requestUpdateResult);
-      } catch (error) {
-        res.status(500).send({ message: "Failed to update request pipelines" });
-      }
-    });
-  } finally {
+  if (req.body.status?.toLowerCase() === "approved") {
+    const reqDoc = await requestCollection.findOne({ _id: requestId });
+    await petsCollection.updateOne(
+      { _id: new ObjectId(reqDoc.petId) },
+      { $set: { status: "adopted" } },
+    );
+    await requestCollection.updateMany(
+      { petId: reqDoc.petId, _id: { $ne: requestId } },
+      { $set: { status: "Rejected" } },
+    );
   }
-}
-run().catch(console.dir);
+  res.send(updateResult);
+});
 
-app.listen(SERVER_PORT, console.log(`Server is listening ${SERVER_PORT}`));
+// Local development listener
+if (process.env.NODE_ENV !== "production") {
+  app.listen(5000, () => console.log("Local Server running on 5000"));
+}
+
+module.exports = app;
