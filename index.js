@@ -1,10 +1,36 @@
 require("dotenv").config();
 
+const allowedOrigins = [process.env.CLIENT_URI, "http://localhost:3000"];
+
 const express = require("express");
 const cors = require("cors");
 const app = express();
 
-app.use(cors());
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin) return callback(null, true);
+
+      const sanitizedOrigin = origin.replace(/\/$/, "");
+
+      if (allowedOrigins.includes(sanitizedOrigin)) {
+        callback(null, true);
+      } else {
+        console.error(`CORS Blocked an unauthorized origin: ${origin}`);
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "X-Requested-With",
+      "Accept",
+    ],
+  }),
+);
+app.options("*", cors());
 app.use(express.json());
 
 const SERVER_PORT = 5000;
