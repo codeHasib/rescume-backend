@@ -73,6 +73,7 @@ async function run() {
     app.post("/pets", verifyToken, async (req, res) => {
       const newPet = req.body;
       newPet.ownerEmail = req.user.email;
+      newPet.status = "available";
       const result = await petsCollection.insertOne(newPet);
       res.send(result);
     });
@@ -99,9 +100,32 @@ async function run() {
     });
 
     app.get("/requests", verifyToken, async (req, res) => {
-      const cursor = requestCollection.find();
-      const result = await cursor.toArray();
-      res.send(result);
+      try {
+        const userEmail = req.user.email;
+        const query = { applicantEmail: userEmail };
+        const cursor = requestCollection.find(query);
+        const result = await cursor.toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: "Internal server error" });
+      }
+    });
+
+    app.get("/incoming-requests", verifyToken, async (req, res) => {
+      try {
+        const ownerEmail = req.user.email;
+        const myPets = await petsCollection
+          .find({ ownerEmail: ownerEmail })
+          .toArray();
+        const myPetIds = myPets.map((pet) => pet._id.toString());
+        const query = { petId: { $in: myPetIds } };
+
+        const cursor = requestCollection.find(query);
+        const result = await cursor.toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: "Internal server error" });
+      }
     });
 
     app.post("/requests", verifyToken, async (req, res) => {
@@ -135,14 +159,42 @@ async function run() {
     });
 
     app.patch("/requests/:id", verifyToken, async (req, res) => {
-      const query = {
-        _id: new ObjectId(req.params.id),
-      };
-      const updatedRequest = req.body;
-      const result = await requestCollection.updateOne(query, {
-        $set: updatedRequest,
-      });
-      res.send(result);
+      try {
+        const requestId = req.params.id;
+        const updatedRequest = req.body;
+
+        const requestQuery = { _id: new ObjectId(requestId) };
+
+        const requestUpdateResult = await requestCollection.updateOne(
+          requestQuery,
+          {
+            $set: updatedRequest,
+          },
+        );
+
+        if (updatedRequest.status?.toLowerCase() === "approved") {
+          const currentRequest = await requestCollection.findOne(requestQuery);
+
+          if (currentRequest && currentRequest.petId) {
+            
+            await petsCollection.updateOne(
+              { _id: new ObjectId(currentRequest.petId) },
+              { $set: { status: "adopted" } },
+            );
+            await requestCollection.updateMany(
+              {
+                petId: currentRequest.petId,
+                _id: { $ne: new ObjectId(requestId) },
+              },
+              { $set: { status: "Rejected" } },
+            );
+          }
+        }
+
+        res.send(requestUpdateResult);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to update request pipelines" });
+      }
     });
   } finally {
   }
