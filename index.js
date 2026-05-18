@@ -226,6 +226,4 @@ async function run() {
 }
 run().catch(console.dir);
 
-const serverless = require("serverless-http");
-
-module.exports = serverless(app);
+app.listen(SERVER_PORT, console.log(`Server is listening ${SERVER_PORT}`));
