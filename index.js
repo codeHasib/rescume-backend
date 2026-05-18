@@ -57,9 +57,27 @@ async function run() {
     });
 
     app.get("/pets", async (req, res) => {
-      const cursor = petsCollection.find();
-      const result = await cursor.toArray();
-      res.send(result);
+      try {
+        const { name, species } = req.query;
+        let query = {};
+
+        if (name) {
+          query.petName = { $regex: name, $options: "i" };
+        }
+
+        if (species) {
+          const speciesArray = species.split(",");
+          query.species = { $in: speciesArray };
+        }
+
+        const cursor = petsCollection.find(query);
+        const result = await cursor.toArray();
+        res.send(result);
+      } catch (error) {
+        res
+          .status(500)
+          .send({ message: "Database query failed", error: error.message });
+      }
     });
 
     app.get("/pets/:id", verifyToken, async (req, res) => {
@@ -176,7 +194,6 @@ async function run() {
           const currentRequest = await requestCollection.findOne(requestQuery);
 
           if (currentRequest && currentRequest.petId) {
-            
             await petsCollection.updateOne(
               { _id: new ObjectId(currentRequest.petId) },
               { $set: { status: "adopted" } },
