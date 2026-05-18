@@ -5,7 +5,8 @@ const allowedOrigins = [process.env.CLIENT_URI, "http://localhost:3000"];
 const express = require("express");
 const cors = require("cors");
 const app = express();
-app.use(cors) / app.use(express.json());
+app.use(cors);
+app.use(express.json());
 
 const SERVER_PORT = 5000;
 
