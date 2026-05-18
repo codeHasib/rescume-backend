@@ -6,7 +6,6 @@ const { createRemoteJWKSet, jwtVerify } = require("jose-cjs");
 
 const app = express();
 
-// 1. Production CORS (Allows Better Auth to work across domains)
 const allowedOrigins = [
   process.env.CLIENT_URI ? process.env.CLIENT_URI.replace(/\/$/, "") : "",
   "http://localhost:3000",
@@ -29,7 +28,6 @@ app.use(
 
 app.use(express.json());
 
-// 2. MongoDB Connection Helper (Fixed for Serverless)
 const uri = `mongodb+srv://${process.env.DB_USERNAME}:${process.env.DB_PASS}@cluster0.cmdrutm.mongodb.net/?appName=Cluster0`;
 const client = new MongoClient(uri, {
   serverApi: {
@@ -51,7 +49,6 @@ async function getDB() {
   return { petsCollection, requestCollection };
 }
 
-// 3. JWT Verification Middleware
 const verifyToken = async (req, res, next) => {
   const authHeader = req?.headers.authorization;
   if (!authHeader?.startsWith("Bearer ")) {
@@ -70,7 +67,6 @@ const verifyToken = async (req, res, next) => {
   }
 };
 
-// 4. Routes
 app.get("/", (req, res) => res.send("Rescume API Online"));
 
 app.get("/pets", async (req, res) => {
@@ -179,7 +175,29 @@ app.patch("/requests/:id", verifyToken, async (req, res) => {
   res.send(updateResult);
 });
 
-// Local development listener
+app.delete("/requests/:id", verifyToken, async (req, res) => {
+  try {
+    const { requestCollection } = await getDB();
+    const requestId = new ObjectId(req.params.id);
+    const userEmail = req.user.email;
+    const result = await requestCollection.deleteOne({
+      _id: requestId,
+      applicantEmail: userEmail,
+    });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({
+        message: "Request not found or you don't have permission to delete it.",
+      });
+    }
+
+    res.send({ message: "Request deleted successfully", result });
+  } catch (error) {
+    console.error("Delete Request Error:", error);
+    res.status(500).json({ message: "Failed to delete the request." });
+  }
+});
+
 if (process.env.NODE_ENV !== "production") {
   app.listen(5000, () => console.log("Local Server running on 5000"));
 }
